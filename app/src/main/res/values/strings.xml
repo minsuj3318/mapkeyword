@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">키워드 길찾기</string>
+    <string name="travel_mode">이동수단 (선택값은 자동 저장됩니다)</string>
+    <string name="mode_driving">자동차</string>
+    <string name="mode_transit">대중교통</string>
+    <string name="mode_walking">도보</string>
+    <string name="mode_bicycling">자전거</string>
+    <string name="keyword_hint">목적지 키워드 (예: 서울역)</string>
+    <string name="add">추가</string>
+    <string name="list_help">누르면 구글맵 길찾기 실행 · 길게 누르면 삭제</string>
+    <string name="empty_list">등록된 키워드가 없습니다.\n위에서 목적지 키워드를 추가해 보세요.</string>
+    <string name="already_exists">이미 등록된 키워드입니다.</string>
+    <string name="delete_message">이 키워드를 삭제할까요?</string>
+    <string name="delete">삭제</string>
+    <string name="cancel">취소</string>
+    <string name="no_maps_app">길찾기를 열 수 있는 앱이 없습니다.</string>
+</resources>
