@@ -1,56 +1,83 @@
 package com.example.mapkeywords
 
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import kotlin.math.cos
 
 data class Place(val name: String, val lat: Double, val lon: Double)
 
-/** OpenStreetMap 데이터를 Overpass API로 조회해 반경 안의 장소를 찾는다. (API 키 불필요) */
+/**
+ * OpenStreetMap 데이터로 반경 안의 장소를 찾는다. (API 키 불필요)
+ * 1순위 Overpass, 실패하거나 결과가 없으면 Nominatim으로 한 번 더 검색한다.
+ */
 object PlaceSearch {
 
-    private val ENDPOINTS = listOf(
+    private const val USER_AGENT = "MapKeywords/1.0 (+https://github.com/minsuj3318/mapkeyword)"
+
+    private val OVERPASS_ENDPOINTS = listOf(
         "https://overpass-api.de/api/interpreter",
         "https://overpass.kumi.systems/api/interpreter"
     )
+    private const val NOMINATIM = "https://nominatim.openstreetmap.org/search"
 
     /** 현재 위치(lat, lon) 기준 radius(m) 이내에서 이름/브랜드에 keyword가 들어간 장소를 찾는다. */
     @Throws(IOException::class)
     fun search(keyword: String, lat: Double, lon: Double, radius: Int): List<Place> {
-        val pattern = toOverpassRegex(keyword.trim())
+        val errors = mutableListOf<String>()
+
+        // 1) Overpass
+        var overpass: List<Place>? = null
+        val query = overpassQuery(keyword.trim(), lat, lon, radius)
+        for (endpoint in OVERPASS_ENDPOINTS) {
+            try {
+                overpass = parseOverpass(http(endpoint, "data=" + URLEncoder.encode(query, "UTF-8")))
+                break
+            } catch (e: IOException) {
+                errors.add("${URL(endpoint).host}: ${e.message}")
+            }
+        }
+        if (!overpass.isNullOrEmpty()) return overpass
+
+        // 2) Nominatim (Overpass 실패 또는 결과 없음)
+        val fallback = try {
+            nominatim(keyword.trim(), lat, lon, radius)
+        } catch (e: IOException) {
+            errors.add("nominatim: ${e.message}")
+            null
+        }
+        if (fallback != null) return fallback
+        if (overpass != null) return overpass
+        throw IOException(errors.joinToString(" / "))
+    }
+
+    private fun overpassQuery(keyword: String, lat: Double, lon: Double, radius: Int): String {
+        val pattern = toOverpassRegex(keyword)
         val around = "(around:$radius,$lat,$lon)"
-        val query = buildString {
+        return buildString {
             append("[out:json][timeout:25];(")
             for (key in listOf("name", "name:ko", "brand", "brand:ko")) {
                 append("nwr[\"$key\"~\"$pattern\",i]$around;")
             }
             append(");out center 100;")
         }
-
-        var lastError: IOException? = null
-        for (endpoint in ENDPOINTS) {
-            try {
-                return parse(request(endpoint, query))
-            } catch (e: IOException) {
-                lastError = e
-            }
-        }
-        throw lastError ?: IOException("검색 실패")
     }
 
-    private fun request(endpoint: String, query: String): String {
-        val conn = URL(endpoint).openConnection() as HttpURLConnection
+    /** GET(body == null) 또는 POST 요청을 보내고 본문을 문자열로 돌려준다. */
+    private fun http(url: String, body: String?): String {
+        val conn = URL(url).openConnection() as HttpURLConnection
         try {
-            conn.requestMethod = "POST"
-            conn.doOutput = true
             conn.connectTimeout = 10_000
             conn.readTimeout = 30_000
-            conn.setRequestProperty("User-Agent", "MapKeywords/1.0 (Android)")
-            conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
-            conn.outputStream.use {
-                it.write("data=${URLEncoder.encode(query, "UTF-8")}".toByteArray())
+            conn.setRequestProperty("User-Agent", USER_AGENT)
+            if (body != null) {
+                conn.requestMethod = "POST"
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+                conn.outputStream.use { it.write(body.toByteArray()) }
             }
             if (conn.responseCode != HttpURLConnection.HTTP_OK) {
                 throw IOException("HTTP ${conn.responseCode}")
@@ -61,7 +88,7 @@ object PlaceSearch {
         }
     }
 
-    private fun parse(body: String): List<Place> {
+    private fun parseOverpass(body: String): List<Place> {
         val result = mutableListOf<Place>()
         val seen = HashSet<String>()
         val elements = try {
@@ -86,12 +113,49 @@ object PlaceSearch {
                 lat = center.getDouble("lat")
                 lon = center.getDouble("lon")
             }
-
-            // 같은 매장이 점(node)과 건물(way)로 중복 등록된 경우 하나만 사용
-            val key = "$name|${"%.4f".format(lat)}|${"%.4f".format(lon)}"
-            if (seen.add(key)) result.add(Place(name, lat, lon))
+            addUnique(result, seen, name, lat, lon)
         }
         return result
+    }
+
+    /** Nominatim: 현재 위치 주변 사각형 안에서만 이름 검색 */
+    private fun nominatim(keyword: String, lat: Double, lon: Double, radius: Int): List<Place> {
+        val dLat = radius / 111_320.0
+        val dLon = radius / (111_320.0 * cos(Math.toRadians(lat)))
+        val viewbox = "${lon - dLon},${lat + dLat},${lon + dLon},${lat - dLat}"
+        val url = "$NOMINATIM?format=jsonv2&limit=40&bounded=1&accept-language=ko" +
+            "&q=${URLEncoder.encode(keyword, "UTF-8")}&viewbox=$viewbox"
+
+        val array = try {
+            JSONArray(http(url, null))
+        } catch (e: IOException) {
+            throw e
+        } catch (e: Exception) {
+            throw IOException("응답 해석 실패")
+        }
+
+        val result = mutableListOf<Place>()
+        val seen = HashSet<String>()
+        for (i in 0 until array.length()) {
+            val o = array.getJSONObject(i)
+            val name = o.optString("name", "").ifEmpty {
+                o.optString("display_name", "").substringBefore(",").trim()
+            }
+            if (name.isEmpty()) continue
+            val pLat = o.optString("lat", "").toDoubleOrNull() ?: continue
+            val pLon = o.optString("lon", "").toDoubleOrNull() ?: continue
+            addUnique(result, seen, name, pLat, pLon)
+        }
+        return result
+    }
+
+    // 같은 매장이 점(node)과 건물(way)로 중복 등록된 경우 하나만 사용
+    private fun addUnique(
+        out: MutableList<Place>, seen: MutableSet<String>,
+        name: String, lat: Double, lon: Double
+    ) {
+        val key = "$name|${"%.4f".format(lat)}|${"%.4f".format(lon)}"
+        if (seen.add(key)) out.add(Place(name, lat, lon))
     }
 
     /** 정규식 특수문자를 이스케이프한 뒤 Overpass 문자열 규칙(역슬래시, 따옴표)에 맞게 변환한다. */

@@ -274,19 +274,17 @@ class MapActivity : AppCompatActivity(), LocationListener, SensorEventListener {
         setStatus(getString(R.string.searching, keywords.joinToString(", "), formatDistance(radius)))
         executor.execute {
             // 키워드별로 차례대로 검색. 실패한 키워드는 null
-            val results = LinkedHashMap<String, List<Place>?>()
+            val results = LinkedHashMap<String, Result<List<Place>>>()
             for (k in keywords) {
-                results[k] = try {
+                results[k] = runCatching {
                     PlaceSearch.search(k, location.latitude, location.longitude, radius)
-                } catch (e: Exception) {
-                    null
                 }
             }
             runOnUiThread {
                 queryRunning = false
                 if (isFinishing || isDestroyed) return@runOnUiThread
 
-                if (results.values.any { it == null }) {
+                if (results.values.any { it.isFailure }) {
                     // 일부라도 실패하면 잠시 뒤 자동으로 다시 시도
                     nextQueryAllowedAt = System.currentTimeMillis() + RETRY_DELAY_MS
                     statusText.postDelayed({
@@ -298,8 +296,9 @@ class MapActivity : AppCompatActivity(), LocationListener, SensorEventListener {
                     lastQueryLocation = location
                 }
 
-                if (results.values.all { it == null }) {
-                    setStatus(getString(R.string.search_failed))
+                if (results.values.all { it.isFailure }) {
+                    val reason = results.values.firstNotNullOfOrNull { it.exceptionOrNull()?.message }
+                    setStatus(getString(R.string.search_failed) + (reason?.let { "\n($it)" } ?: ""))
                 } else {
                     showPlaces(results, location)
                 }
@@ -307,7 +306,7 @@ class MapActivity : AppCompatActivity(), LocationListener, SensorEventListener {
         }
     }
 
-    private fun showPlaces(results: Map<String, List<Place>?>, from: Location) {
+    private fun showPlaces(results: Map<String, Result<List<Place>>>, from: Location) {
         map.overlays.removeAll(poiMarkers.toSet())
         poiMarkers.clear()
 
@@ -317,7 +316,8 @@ class MapActivity : AppCompatActivity(), LocationListener, SensorEventListener {
         val summary = SpannableStringBuilder(getString(R.string.radius_header, formatDistance(radius)))
         keywords.forEachIndexed { index, keyword ->
             val color = COLORS[index % COLORS.size]
-            val places = results[keyword]
+            val outcome = results[keyword]
+            val places = outcome?.getOrNull()
 
             val found = places?.map { p ->
                 val d = FloatArray(1)
@@ -351,7 +351,7 @@ class MapActivity : AppCompatActivity(), LocationListener, SensorEventListener {
             )
             summary.append(" ").append(keyword).append(" · ")
             summary.append(
-                if (found == null) getString(R.string.failed_short)
+                if (found == null) getString(R.string.failed_reason, outcome?.exceptionOrNull()?.message ?: "?")
                 else getString(R.string.count_places, found.size)
             )
         }
