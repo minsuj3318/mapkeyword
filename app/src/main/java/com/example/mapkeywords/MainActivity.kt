@@ -1,17 +1,19 @@
 package com.example.mapkeywords
 
-import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
-import android.net.Uri
 import android.os.Bundle
+import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ListView
 import android.widget.RadioGroup
+import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -21,7 +23,7 @@ import org.json.JSONArray
 class MainActivity : AppCompatActivity() {
 
     private lateinit var prefs: SharedPreferences
-    private lateinit var adapter: ArrayAdapter<String>
+    private lateinit var adapter: KeywordAdapter
     private lateinit var input: EditText
     private val keywords = mutableListOf<String>()
 
@@ -34,9 +36,25 @@ class MainActivity : AppCompatActivity() {
 
         // 이동수단: 마지막으로 선택한 값을 저장해 두었다가 다음 실행 때도 그대로 사용
         val modeGroup = findViewById<RadioGroup>(R.id.modeGroup)
-        modeGroup.check(idForMode(prefs.getString(KEY_MODE, MODE_DRIVING) ?: MODE_DRIVING))
+        modeGroup.check(idForMode(currentMode()))
         modeGroup.setOnCheckedChangeListener { _, checkedId ->
             prefs.edit().putString(KEY_MODE, modeForId(checkedId)).apply()
+        }
+
+        // 주변 지도 검색 반경: 선택값을 저장해 두고 다음 실행 때도 그대로 사용
+        val radiusSpinner = findViewById<Spinner>(R.id.radiusSpinner)
+        radiusSpinner.adapter = ArrayAdapter(
+            this, android.R.layout.simple_spinner_dropdown_item, RADIUS_LABELS
+        )
+        radiusSpinner.setSelection(
+            RADIUS_VALUES.indexOf(prefs.getInt(KEY_RADIUS, DEFAULT_RADIUS)).coerceAtLeast(0)
+        )
+        radiusSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                prefs.edit().putInt(KEY_RADIUS, RADIUS_VALUES[position]).apply()
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
 
         input = findViewById(R.id.keywordInput)
@@ -44,11 +62,13 @@ class MainActivity : AppCompatActivity() {
         val list = findViewById<ListView>(R.id.keywordList)
         list.emptyView = findViewById<TextView>(R.id.emptyView)
 
-        adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, keywords)
+        adapter = KeywordAdapter()
         list.adapter = adapter
 
-        // 짧게 누르면 길찾기 실행, 길게 누르면 삭제
-        list.setOnItemClickListener { _, _, position, _ -> openDirections(keywords[position]) }
+        // 짧게 누르면 길찾기 실행, 길게 누르면 삭제, [주변 지도] 버튼은 반경 내 검색
+        list.setOnItemClickListener { _, _, position, _ ->
+            Directions.open(this, keywords[position], currentMode())
+        }
         list.setOnItemLongClickListener { _, _, position, _ ->
             confirmDelete(position)
             true
@@ -64,6 +84,28 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+
+    private inner class KeywordAdapter : ArrayAdapter<String>(
+        this@MainActivity, R.layout.item_keyword, R.id.keywordText, keywords
+    ) {
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            val view = super.getView(position, convertView, parent)
+            view.findViewById<View>(R.id.mapButton).setOnClickListener {
+                openNearbyMap(keywords[position])
+            }
+            return view
+        }
+    }
+
+    private fun openNearbyMap(keyword: String) {
+        val intent = Intent(this, MapActivity::class.java)
+            .putExtra(MapActivity.EXTRA_KEYWORD, keyword)
+            .putExtra(MapActivity.EXTRA_RADIUS, prefs.getInt(KEY_RADIUS, DEFAULT_RADIUS))
+            .putExtra(MapActivity.EXTRA_MODE, currentMode())
+        startActivity(intent)
+    }
+
+    private fun currentMode(): String = prefs.getString(KEY_MODE, MODE_DRIVING) ?: MODE_DRIVING
 
     private fun addKeyword() {
         val text = input.text.toString().trim()
@@ -90,28 +132,6 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton(R.string.cancel, null)
             .show()
-    }
-
-    /** 구글맵 길찾기 화면을 연다. 출발지는 생략하면 현재 위치가 사용된다. */
-    private fun openDirections(keyword: String) {
-        val mode = prefs.getString(KEY_MODE, MODE_DRIVING) ?: MODE_DRIVING
-        val uri = Uri.parse("https://www.google.com/maps/dir/").buildUpon()
-            .appendQueryParameter("api", "1")
-            .appendQueryParameter("destination", keyword)
-            .appendQueryParameter("travelmode", mode)
-            .build()
-
-        try {
-            // 구글맵 앱으로 바로 열기
-            startActivity(Intent(Intent.ACTION_VIEW, uri).setPackage(MAPS_PACKAGE))
-        } catch (e: ActivityNotFoundException) {
-            try {
-                // 구글맵 앱이 없으면 브라우저 등 다른 앱으로 열기
-                startActivity(Intent(Intent.ACTION_VIEW, uri))
-            } catch (e2: ActivityNotFoundException) {
-                Toast.makeText(this, R.string.no_maps_app, Toast.LENGTH_LONG).show()
-            }
-        }
     }
 
     private fun loadKeywords() {
@@ -149,11 +169,15 @@ class MainActivity : AppCompatActivity() {
         private const val PREFS = "settings"
         private const val KEY_MODE = "travel_mode"
         private const val KEY_KEYWORDS = "keywords"
-        private const val MAPS_PACKAGE = "com.google.android.apps.maps"
+        private const val KEY_RADIUS = "radius"
+        private const val DEFAULT_RADIUS = 500
 
         private const val MODE_DRIVING = "driving"
         private const val MODE_TRANSIT = "transit"
         private const val MODE_WALKING = "walking"
         private const val MODE_BICYCLING = "bicycling"
+
+        private val RADIUS_VALUES = intArrayOf(200, 300, 500, 1000, 2000, 3000)
+        private val RADIUS_LABELS = arrayOf("200m", "300m", "500m", "1km", "2km", "3km")
     }
 }

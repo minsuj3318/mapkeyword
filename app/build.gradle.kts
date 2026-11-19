@@ -33,4 +33,6 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
+    // 키 없이 쓰는 OpenStreetMap 지도
+    implementation("org.osmdroid:osmdroid-android:6.1.18")
 }
