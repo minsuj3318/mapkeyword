@@ -115,4 +115,11 @@
             android:text="@string/empty_list" />
     </FrameLayout>
 
+    <Button
+        android:id="@+id/multiButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:enabled="false" />
+
 </LinearLayout>

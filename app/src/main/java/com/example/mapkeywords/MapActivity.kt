@@ -13,6 +13,9 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
@@ -33,8 +36,8 @@ import kotlin.math.abs
 import kotlin.math.cos
 
 /**
- * 현재 위치 기준 반경 안의 키워드 장소를 지도에 표시한다.
- * 현재 위치는 방향(나침반)에 따라 회전하는 화살표로 표시된다.
+ * 현재 위치 기준 반경 안의 키워드(여러 개 가능) 장소를 지도에 표시한다.
+ * 키워드마다 마커 색이 다르고, 현재 위치는 방향(나침반)에 따라 회전하는 화살표로 표시된다.
  */
 class MapActivity : AppCompatActivity(), LocationListener, SensorEventListener {
 
@@ -44,7 +47,7 @@ class MapActivity : AppCompatActivity(), LocationListener, SensorEventListener {
     private lateinit var sensorManager: SensorManager
     private var rotationSensor: Sensor? = null
 
-    private lateinit var keyword: String
+    private lateinit var keywords: List<String>
     private var radius = 500
     private var mode = "driving"
 
@@ -84,20 +87,22 @@ class MapActivity : AppCompatActivity(), LocationListener, SensorEventListener {
         }
         setContentView(R.layout.activity_map)
 
-        val kw = intent.getStringExtra(EXTRA_KEYWORD)
-        if (kw == null) {
+        val list = intent.getStringArrayExtra(EXTRA_KEYWORDS)
+            ?.filter { it.isNotBlank() }
+            ?.distinct()
+        if (list.isNullOrEmpty()) {
             finish()
             return
         }
-        keyword = kw
+        keywords = list
         radius = intent.getIntExtra(EXTRA_RADIUS, 500)
         mode = intent.getStringExtra(EXTRA_MODE) ?: "driving"
 
-        title = keyword
+        title = keywords.joinToString(", ")
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
 
         statusText = findViewById(R.id.statusText)
-        setStatus(getString(R.string.finding_location, keyword, formatDistance(radius)))
+        setStatus(getString(R.string.finding_location, keywords.joinToString(", "), formatDistance(radius)))
 
         map = findViewById(R.id.map)
         map.setTileSource(TileSourceFactory.MAPNIK)
@@ -265,67 +270,98 @@ class MapActivity : AppCompatActivity(), LocationListener, SensorEventListener {
 
     private fun runQuery(location: Location) {
         queryRunning = true
-        setStatus(getString(R.string.searching, keyword, formatDistance(radius)))
+        setStatus(getString(R.string.searching, keywords.joinToString(", "), formatDistance(radius)))
         executor.execute {
-            val places = try {
-                PlaceSearch.search(keyword, location.latitude, location.longitude, radius)
-            } catch (e: Exception) {
-                null
+            // 키워드별로 차례대로 검색. 실패한 키워드는 null
+            val results = LinkedHashMap<String, List<Place>?>()
+            for (k in keywords) {
+                results[k] = try {
+                    PlaceSearch.search(k, location.latitude, location.longitude, radius)
+                } catch (e: Exception) {
+                    null
+                }
             }
             runOnUiThread {
                 queryRunning = false
                 if (isFinishing || isDestroyed) return@runOnUiThread
-                if (places == null) {
+
+                if (results.values.any { it == null }) {
+                    // 일부라도 실패하면 잠시 뒤 자동으로 다시 시도
                     nextQueryAllowedAt = System.currentTimeMillis() + RETRY_DELAY_MS
-                    setStatus(getString(R.string.search_failed))
+                    statusText.postDelayed({
+                        if (!isFinishing && !queryRunning) {
+                            lastLocation?.let { runQuery(it) }
+                        }
+                    }, RETRY_DELAY_MS)
                 } else {
                     lastQueryLocation = location
-                    showPlaces(places, location)
+                }
+
+                if (results.values.all { it == null }) {
+                    setStatus(getString(R.string.search_failed))
+                } else {
+                    showPlaces(results, location)
                 }
             }
         }
     }
 
-    private fun showPlaces(places: List<Place>, from: Location) {
+    private fun showPlaces(results: Map<String, List<Place>?>, from: Location) {
         map.overlays.removeAll(poiMarkers.toSet())
         poiMarkers.clear()
 
-        val withDistance = places.map { p ->
-            val d = FloatArray(1)
-            Location.distanceBetween(from.latitude, from.longitude, p.lat, p.lon, d)
-            p to d[0].toInt()
-        }.filter { it.second <= radius }.sortedBy { it.second }
-
         // 현재 위치 마커 아래에 깔리도록 그 앞에 삽입
         val insertAt = myMarker?.let { map.overlays.indexOf(it) }?.takeIf { it >= 0 } ?: map.overlays.size
-        for ((place, dist) in withDistance) {
-            val marker = Marker(map).apply {
-                position = GeoPoint(place.lat, place.lon)
-                title = place.name
-                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                setOnMarkerClickListener { _, _ ->
-                    showPlaceDialog(place, dist)
-                    true
+
+        val summary = SpannableStringBuilder(getString(R.string.radius_header, formatDistance(radius)))
+        keywords.forEachIndexed { index, keyword ->
+            val color = COLORS[index % COLORS.size]
+            val places = results[keyword]
+
+            val found = places?.map { p ->
+                val d = FloatArray(1)
+                Location.distanceBetween(from.latitude, from.longitude, p.lat, p.lon, d)
+                p to d[0].toInt()
+            }?.filter { it.second <= radius }?.sortedBy { it.second }
+
+            found?.forEach { (place, dist) ->
+                val pin = ContextCompat.getDrawable(this, R.drawable.ic_poi_pin)?.mutate()
+                pin?.setTint(color)
+                val marker = Marker(map).apply {
+                    position = GeoPoint(place.lat, place.lon)
+                    title = place.name
+                    icon = pin
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                    setOnMarkerClickListener { _, _ ->
+                        showPlaceDialog(keyword, place, dist)
+                        true
+                    }
                 }
+                poiMarkers.add(marker)
+                map.overlays.add(insertAt, marker)
             }
-            poiMarkers.add(marker)
-            map.overlays.add(insertAt, marker)
+
+            // 상단 요약: ● 키워드 · N곳 (● 색 = 지도 마커 색)
+            summary.append("\n")
+            val start = summary.length
+            summary.append("●")
+            summary.setSpan(
+                ForegroundColorSpan(color), start, start + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+            summary.append(" ").append(keyword).append(" · ")
+            summary.append(
+                if (found == null) getString(R.string.failed_short)
+                else getString(R.string.count_places, found.size)
+            )
         }
         map.invalidate()
-
-        setStatus(
-            if (withDistance.isEmpty()) {
-                getString(R.string.no_results, keyword, formatDistance(radius))
-            } else {
-                getString(R.string.result_count, keyword, formatDistance(radius), withDistance.size)
-            }
-        )
+        statusText.text = summary
     }
 
-    private fun showPlaceDialog(place: Place, distance: Int) {
+    private fun showPlaceDialog(keyword: String, place: Place, distance: Int) {
         AlertDialog.Builder(this)
             .setTitle(place.name)
-            .setMessage(getString(R.string.distance_from_here, formatDistance(distance)))
+            .setMessage(getString(R.string.place_dialog_message, keyword, formatDistance(distance)))
             .setPositiveButton(R.string.directions) { _, _ ->
                 Directions.open(this, "${place.lat},${place.lon}", mode)
             }
@@ -373,11 +409,21 @@ class MapActivity : AppCompatActivity(), LocationListener, SensorEventListener {
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     companion object {
-        const val EXTRA_KEYWORD = "keyword"
+        const val EXTRA_KEYWORDS = "keywords"
         const val EXTRA_RADIUS = "radius"
         const val EXTRA_MODE = "mode"
 
         private const val REQUERY_METERS = 50f
         private const val RETRY_DELAY_MS = 10_000L
+
+        // 키워드별 마커 색 (최대 6개 키워드 구분)
+        private val COLORS = intArrayOf(
+            Color.parseColor("#E53935"), // 빨강
+            Color.parseColor("#1E88E5"), // 파랑
+            Color.parseColor("#43A047"), // 초록
+            Color.parseColor("#FB8C00"), // 주황
+            Color.parseColor("#8E24AA"), // 보라
+            Color.parseColor("#00ACC1")  // 청록
+        )
     }
 }

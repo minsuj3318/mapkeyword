@@ -10,6 +10,7 @@ import android.view.inputmethod.EditorInfo
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.ListView
 import android.widget.RadioGroup
@@ -26,6 +27,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var adapter: KeywordAdapter
     private lateinit var input: EditText
     private val keywords = mutableListOf<String>()
+    private val selected = linkedSetOf<String>()
+    private lateinit var multiButton: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,6 +68,11 @@ class MainActivity : AppCompatActivity() {
         adapter = KeywordAdapter()
         list.adapter = adapter
 
+        // 체크한 키워드를 한 지도에 함께 표시
+        multiButton = findViewById(R.id.multiButton)
+        multiButton.setOnClickListener { openSelectedMap() }
+        updateMultiButton()
+
         // 짧게 누르면 길찾기 실행, 길게 누르면 삭제, [주변 지도] 버튼은 반경 내 검색
         list.setOnItemClickListener { _, _, position, _ ->
             Directions.open(this, keywords[position], currentMode())
@@ -90,16 +98,45 @@ class MainActivity : AppCompatActivity() {
     ) {
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
             val view = super.getView(position, convertView, parent)
+            val keyword = keywords[position]
             view.findViewById<View>(R.id.mapButton).setOnClickListener {
-                openNearbyMap(keywords[position])
+                openNearbyMap(arrayOf(keyword))
+            }
+
+            val check = view.findViewById<CheckBox>(R.id.selectCheck)
+            check.setOnCheckedChangeListener(null)
+            check.isChecked = selected.contains(keyword)
+            check.setOnCheckedChangeListener { buttonView, isChecked ->
+                if (isChecked) {
+                    if (selected.size >= MAX_SELECTED) {
+                        buttonView.isChecked = false
+                        Toast.makeText(this@MainActivity, R.string.max_selected, Toast.LENGTH_SHORT).show()
+                        return@setOnCheckedChangeListener
+                    }
+                    selected.add(keyword)
+                } else {
+                    selected.remove(keyword)
+                }
+                updateMultiButton()
             }
             return view
         }
     }
 
-    private fun openNearbyMap(keyword: String) {
+    private fun openSelectedMap() {
+        // 목록 순서대로 정렬해서 전달 (마커 색 순서가 항상 같도록)
+        val chosen = keywords.filter { it in selected }.toTypedArray()
+        if (chosen.isNotEmpty()) openNearbyMap(chosen)
+    }
+
+    private fun updateMultiButton() {
+        multiButton.isEnabled = selected.isNotEmpty()
+        multiButton.text = getString(R.string.select_button, selected.size)
+    }
+
+    private fun openNearbyMap(chosen: Array<String>) {
         val intent = Intent(this, MapActivity::class.java)
-            .putExtra(MapActivity.EXTRA_KEYWORD, keyword)
+            .putExtra(MapActivity.EXTRA_KEYWORDS, chosen)
             .putExtra(MapActivity.EXTRA_RADIUS, prefs.getInt(KEY_RADIUS, DEFAULT_RADIUS))
             .putExtra(MapActivity.EXTRA_MODE, currentMode())
         startActivity(intent)
@@ -127,6 +164,8 @@ class MainActivity : AppCompatActivity() {
             .setMessage(R.string.delete_message)
             .setPositiveButton(R.string.delete) { _, _ ->
                 keywords.removeAt(position)
+                selected.remove(target)
+                updateMultiButton()
                 saveKeywords()
                 adapter.notifyDataSetChanged()
             }
@@ -171,6 +210,7 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_KEYWORDS = "keywords"
         private const val KEY_RADIUS = "radius"
         private const val DEFAULT_RADIUS = 500
+        private const val MAX_SELECTED = 6
 
         private const val MODE_DRIVING = "driving"
         private const val MODE_TRANSIT = "transit"
