@@ -148,9 +148,8 @@ object PlaceSearch {
         val around = "(around:$radius,$lat,$lon)"
         return buildString {
             append("[out:json][timeout:15];(")
-            for (key in listOf("name", "name:ko", "brand", "brand:ko")) {
-                append("nwr[\"$key\"~\"$pattern\",i]$around;")
-            }
+            // name, name:en, name:ja, brand:en 등 모든 언어의 이름/브랜드 태그에서 찾는다
+            append("nwr[~\"^(name|brand)(:.*)?\$\"~\"$pattern\",i]$around;")
             append(");out center 100;")
         }
     }
@@ -189,7 +188,7 @@ object PlaceSearch {
         for (i in 0 until elements.length()) {
             val el = elements.getJSONObject(i)
             val tags = el.optJSONObject("tags") ?: continue
-            val name = listOf("name:ko", "name", "brand:ko", "brand")
+            val name = listOf("name:ko", "name", "brand:ko", "brand", "name:en", "brand:en")
                 .map { tags.optString(it, "") }
                 .firstOrNull { it.isNotEmpty() } ?: continue
 
