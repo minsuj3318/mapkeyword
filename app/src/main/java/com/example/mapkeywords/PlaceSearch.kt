@@ -35,9 +35,13 @@ object PlaceSearch {
         val kw = keyword.trim()
 
         // 0) 카카오 로컬 API: 한국 상점 정보가 가장 풍부 (키가 있을 때만)
-        if (ApiKeys.kakaoRestKey.isNotBlank()) {
+        // 카카오는 한국 안에서만 검색되므로, 한국 밖이거나 결과가 없으면 OpenStreetMap(전 세계)으로 넘어간다
+        var kakaoEmpty = false
+        if (ApiKeys.kakaoRestKey.isNotBlank() && isInKorea(lat, lon)) {
             try {
-                return kakao(kw, lat, lon, radius)
+                val found = kakao(kw, lat, lon, radius)
+                if (found.isNotEmpty()) return found
+                kakaoEmpty = true
             } catch (e: AuthException) {
                 throw e // 키/설정 문제는 바로 알려준다
             } catch (e: IOException) {
@@ -73,9 +77,13 @@ object PlaceSearch {
         if (!overpass.isNullOrEmpty()) return overpass
 
         // 어느 한쪽이라도 정상 응답했다면 '결과 없음'
-        if (nominatim != null || overpass != null) return emptyList()
+        if (kakaoEmpty || nominatim != null || overpass != null) return emptyList()
         throw IOException(errors.joinToString(" / "))
     }
+
+    /** 대한민국 영역(독도 포함)을 넉넉하게 감싼 사각형 안인지 */
+    private fun isInKorea(lat: Double, lon: Double): Boolean =
+        lat in 33.0..38.7 && lon in 124.5..132.0
 
     /** 설정 화면용: 입력한 키로 간단한 검색을 해 보고, 문제가 있으면 예외를 던진다. */
     @Throws(IOException::class)
