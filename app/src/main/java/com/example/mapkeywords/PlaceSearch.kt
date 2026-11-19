@@ -34,6 +34,17 @@ object PlaceSearch {
         val errors = mutableListOf<String>()
         val kw = keyword.trim()
 
+        // 0) 카카오 로컬 API: 한국 상점 정보가 가장 풍부 (키가 있을 때만)
+        if (ApiKeys.KAKAO_REST_KEY.isNotBlank()) {
+            try {
+                return kakao(kw, lat, lon, radius)
+            } catch (e: AuthException) {
+                throw e // 키/설정 문제는 바로 알려준다
+            } catch (e: IOException) {
+                errors.add("kakao: ${e.message}")
+            }
+        }
+
         // 1) Nominatim: 보통 1~2초 안에 응답
         var nominatim: List<Place>? = null
         try {
@@ -66,6 +77,47 @@ object PlaceSearch {
         throw IOException(errors.joinToString(" / "))
     }
 
+    /** 카카오 키/설정 오류(401, 403). 다른 서버로 넘어가지 않고 사용자에게 바로 알린다. */
+    class AuthException(message: String) : IOException(message)
+
+    /** 카카오 로컬 키워드 검색: 현재 위치 중심 radius(m) 이내, 가까운 순, 최대 45곳 */
+    private fun kakao(keyword: String, lat: Double, lon: Double, radius: Int): List<Place> {
+        val result = mutableListOf<Place>()
+        val seen = HashSet<String>()
+        for (page in 1..3) {
+            val url = "https://dapi.kakao.com/v2/local/search/keyword.json" +
+                "?query=${URLEncoder.encode(keyword, "UTF-8")}" +
+                "&x=$lon&y=$lat&radius=${radius.coerceAtMost(20_000)}" +
+                "&sort=distance&size=15&page=$page"
+
+            val json = try {
+                JSONObject(
+                    http(url, null, NOMINATIM_READ_TIMEOUT_MS, "KakaoAK ${ApiKeys.KAKAO_REST_KEY}")
+                )
+            } catch (e: IOException) {
+                if (e.message == "HTTP 401" || e.message == "HTTP 403") {
+                    throw AuthException(
+                        "카카오 인증 실패(${e.message}): REST API 키와 '카카오맵' 사용 설정을 확인하세요"
+                    )
+                }
+                throw e
+            } catch (e: Exception) {
+                throw IOException("응답 해석 실패")
+            }
+
+            val docs = json.optJSONArray("documents") ?: break
+            for (i in 0 until docs.length()) {
+                val d = docs.getJSONObject(i)
+                val name = d.optString("place_name", "")
+                val pLon = d.optString("x", "").toDoubleOrNull() ?: continue
+                val pLat = d.optString("y", "").toDoubleOrNull() ?: continue
+                if (name.isNotEmpty()) addUnique(result, seen, name, pLat, pLon)
+            }
+            if (json.optJSONObject("meta")?.optBoolean("is_end", true) != false) break
+        }
+        return result
+    }
+
     private fun overpassQuery(keyword: String, lat: Double, lon: Double, radius: Int): String {
         val pattern = toOverpassRegex(keyword)
         val around = "(around:$radius,$lat,$lon)"
@@ -79,12 +131,13 @@ object PlaceSearch {
     }
 
     /** GET(body == null) 또는 POST 요청을 보내고 본문을 문자열로 돌려준다. */
-    private fun http(url: String, body: String?, readTimeoutMs: Int): String {
+    private fun http(url: String, body: String?, readTimeoutMs: Int, authorization: String? = null): String {
         val conn = URL(url).openConnection() as HttpURLConnection
         try {
             conn.connectTimeout = CONNECT_TIMEOUT_MS
             conn.readTimeout = readTimeoutMs
             conn.setRequestProperty("User-Agent", USER_AGENT)
+            if (authorization != null) conn.setRequestProperty("Authorization", authorization)
             if (body != null) {
                 conn.requestMethod = "POST"
                 conn.doOutput = true
