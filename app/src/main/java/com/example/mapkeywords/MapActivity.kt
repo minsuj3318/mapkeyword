@@ -81,7 +81,8 @@ class MapActivity : AppCompatActivity(), LocationListener, SensorEventListener {
 
         // 지도 타일 캐시는 앱 전용 캐시 폴더에 저장
         Configuration.getInstance().apply {
-            userAgentValue = packageName
+            // OSM 타일 서버는 앱을 식별할 수 있는 User-Agent가 없으면 접속을 차단한다
+            userAgentValue = "MapKeywords/1.0 (+https://github.com/minsuj3318/mapkeyword)"
             osmdroidBasePath = File(cacheDir, "osmdroid")
             osmdroidTileCache = File(cacheDir, "osmdroid/tiles")
         }
