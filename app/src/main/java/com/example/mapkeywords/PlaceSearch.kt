@@ -12,7 +12,7 @@ data class Place(val name: String, val lat: Double, val lon: Double)
 
 /**
  * OpenStreetMap 데이터로 반경 안의 장소를 찾는다. (API 키 불필요)
- * 1순위 Overpass, 실패하거나 결과가 없으면 Nominatim으로 한 번 더 검색한다.
+ * 응답이 빠른 Nominatim을 먼저 쓰고, 결과가 없거나 실패하면 Overpass로 한 번 더 검색한다.
  */
 object PlaceSearch {
 
@@ -24,17 +24,36 @@ object PlaceSearch {
     )
     private const val NOMINATIM = "https://nominatim.openstreetmap.org/search"
 
+    private const val CONNECT_TIMEOUT_MS = 8_000
+    private const val NOMINATIM_READ_TIMEOUT_MS = 10_000
+    private const val OVERPASS_READ_TIMEOUT_MS = 20_000
+
     /** 현재 위치(lat, lon) 기준 radius(m) 이내에서 이름/브랜드에 keyword가 들어간 장소를 찾는다. */
     @Throws(IOException::class)
     fun search(keyword: String, lat: Double, lon: Double, radius: Int): List<Place> {
         val errors = mutableListOf<String>()
+        val kw = keyword.trim()
 
-        // 1) Overpass
+        // 1) Nominatim: 보통 1~2초 안에 응답
+        var nominatim: List<Place>? = null
+        try {
+            nominatim = nominatim(kw, lat, lon, radius)
+        } catch (e: IOException) {
+            errors.add("nominatim: ${e.message}")
+        }
+        if (!nominatim.isNullOrEmpty()) return nominatim
+
+        // 2) Overpass: 더 넓게 찾지만 서버가 붐비면 느릴 수 있음
         var overpass: List<Place>? = null
-        val query = overpassQuery(keyword.trim(), lat, lon, radius)
+        val query = overpassQuery(kw, lat, lon, radius)
         for (endpoint in OVERPASS_ENDPOINTS) {
             try {
-                overpass = parseOverpass(http(endpoint, "data=" + URLEncoder.encode(query, "UTF-8")))
+                overpass = parseOverpass(
+                    http(
+                        endpoint, "data=" + URLEncoder.encode(query, "UTF-8"),
+                        OVERPASS_READ_TIMEOUT_MS
+                    )
+                )
                 break
             } catch (e: IOException) {
                 errors.add("${URL(endpoint).host}: ${e.message}")
@@ -42,15 +61,8 @@ object PlaceSearch {
         }
         if (!overpass.isNullOrEmpty()) return overpass
 
-        // 2) Nominatim (Overpass 실패 또는 결과 없음)
-        val fallback = try {
-            nominatim(keyword.trim(), lat, lon, radius)
-        } catch (e: IOException) {
-            errors.add("nominatim: ${e.message}")
-            null
-        }
-        if (fallback != null) return fallback
-        if (overpass != null) return overpass
+        // 어느 한쪽이라도 정상 응답했다면 '결과 없음'
+        if (nominatim != null || overpass != null) return emptyList()
         throw IOException(errors.joinToString(" / "))
     }
 
@@ -58,7 +70,7 @@ object PlaceSearch {
         val pattern = toOverpassRegex(keyword)
         val around = "(around:$radius,$lat,$lon)"
         return buildString {
-            append("[out:json][timeout:25];(")
+            append("[out:json][timeout:15];(")
             for (key in listOf("name", "name:ko", "brand", "brand:ko")) {
                 append("nwr[\"$key\"~\"$pattern\",i]$around;")
             }
@@ -67,11 +79,11 @@ object PlaceSearch {
     }
 
     /** GET(body == null) 또는 POST 요청을 보내고 본문을 문자열로 돌려준다. */
-    private fun http(url: String, body: String?): String {
+    private fun http(url: String, body: String?, readTimeoutMs: Int): String {
         val conn = URL(url).openConnection() as HttpURLConnection
         try {
-            conn.connectTimeout = 10_000
-            conn.readTimeout = 30_000
+            conn.connectTimeout = CONNECT_TIMEOUT_MS
+            conn.readTimeout = readTimeoutMs
             conn.setRequestProperty("User-Agent", USER_AGENT)
             if (body != null) {
                 conn.requestMethod = "POST"
@@ -127,7 +139,7 @@ object PlaceSearch {
             "&q=${URLEncoder.encode(keyword, "UTF-8")}&viewbox=$viewbox"
 
         val array = try {
-            JSONArray(http(url, null))
+            JSONArray(http(url, null, NOMINATIM_READ_TIMEOUT_MS))
         } catch (e: IOException) {
             throw e
         } catch (e: Exception) {
