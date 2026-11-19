@@ -1,6 +1,13 @@
 package com.example.mapkeywords
 
-/** 카카오 개발자 사이트(developers.kakao.com)에서 발급받은 REST API 키를 따옴표 안에 넣으세요. */
+import android.content.Context
+
+/** 카카오 REST API 키. 설정 화면에서 입력하며 폰에만 저장된다. */
 object ApiKeys {
-    val KAKAO_REST_KEY: String = ""
+    @Volatile
+    var kakaoRestKey: String = ""
+
+    fun load(context: Context) {
+        kakaoRestKey = Prefs.of(context).getString(Prefs.KEY_KAKAO, "")?.trim().orEmpty()
+    }
 }

@@ -8,7 +8,31 @@
     <string name="mode_bicycling">자전거</string>
     <string name="keyword_hint">목적지 키워드 (예: 서울역)</string>
     <string name="add">추가</string>
-    <string name="list_help">누르면 구글맵 길찾기 · [주변 지도]는 반경 내 검색 · 체크 후 아래 버튼으로 여러 개 함께 보기 · 길게 누르면 삭제</string>
+    <string name="list_help_directions">누르면 구글맵 길찾기 실행 · 길게 누르면 삭제</string>
+    <string name="list_help_nearby">줄을 눌러 선택하고 아래 버튼으로 여러 개를 함께 보기 · [주변 지도]는 그 키워드만 보기 · 길게 누르면 삭제</string>
+    <string name="nearby_keyword_hint">검색 키워드 (예: 다이소)</string>
+    <string name="empty_nearby">등록된 키워드가 없습니다.\n위에서 검색할 키워드를 추가해 보세요.</string>
+
+    <string name="title_directions">길찾기</string>
+    <string name="title_nearby">주변 검색</string>
+    <string name="title_settings">설정</string>
+    <string name="home_directions">길찾기\n이동수단을 고르고 키워드로 구글맵 길찾기</string>
+    <string name="home_nearby">주변 검색 지도\n반경 안의 키워드 장소를 지도에 표시 (여러 개 가능)</string>
+    <string name="home_settings">설정\n카카오 API 키 입력</string>
+    <string name="key_status_missing">카카오 키가 없습니다. 지금은 OpenStreetMap으로 검색해서 결과가 적을 수 있습니다. 설정에서 키를 입력해 주세요.</string>
+    <string name="key_status_ok">카카오 키가 설정되어 있습니다. 주변 검색에 카카오 장소 정보를 사용합니다.</string>
+
+    <string name="key_title">카카오 REST API 키</string>
+    <string name="key_help">developers.kakao.com 에서 앱을 만들고 [앱 키]의 REST API 키를 복사해 붙여넣으세요. [제품 설정]의 카카오맵 사용 설정도 ON이어야 합니다. 키는 이 폰에만 저장됩니다.</string>
+    <string name="key_hint">REST API 키 붙여넣기</string>
+    <string name="key_save">저장</string>
+    <string name="key_test">키 확인</string>
+    <string name="key_saved">저장했습니다.</string>
+    <string name="key_cleared">키를 삭제했습니다.</string>
+    <string name="key_empty">키를 먼저 입력해 주세요.</string>
+    <string name="key_testing">확인 중…</string>
+    <string name="key_test_ok">정상입니다. 이 키로 카카오 검색을 사용할 수 있습니다. (저장 버튼을 눌러야 적용됩니다)</string>
+    <string name="key_test_fail">확인 실패: %1$s</string>
     <string name="radius_label">주변 지도 검색 반경 (자동 저장)</string>
     <string name="nearby_map">주변 지도</string>
     <string name="my_location">내 위치</string>

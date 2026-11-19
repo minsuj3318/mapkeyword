@@ -87,6 +87,7 @@ class MapActivity : AppCompatActivity(), LocationListener, SensorEventListener {
             osmdroidTileCache = File(cacheDir, "osmdroid/tiles")
         }
         setContentView(R.layout.activity_map)
+        ApiKeys.load(this)
 
         val list = intent.getStringArrayExtra(EXTRA_KEYWORDS)
             ?.filter { it.isNotBlank() }

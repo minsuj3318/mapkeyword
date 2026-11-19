@@ -35,7 +35,7 @@ object PlaceSearch {
         val kw = keyword.trim()
 
         // 0) 카카오 로컬 API: 한국 상점 정보가 가장 풍부 (키가 있을 때만)
-        if (ApiKeys.KAKAO_REST_KEY.isNotBlank()) {
+        if (ApiKeys.kakaoRestKey.isNotBlank()) {
             try {
                 return kakao(kw, lat, lon, radius)
             } catch (e: AuthException) {
@@ -77,6 +77,23 @@ object PlaceSearch {
         throw IOException(errors.joinToString(" / "))
     }
 
+    /** 설정 화면용: 입력한 키로 간단한 검색을 해 보고, 문제가 있으면 예외를 던진다. */
+    @Throws(IOException::class)
+    fun verifyKakaoKey(key: String) {
+        val url = "https://dapi.kakao.com/v2/local/search/keyword.json" +
+            "?query=${URLEncoder.encode("카페", "UTF-8")}&x=126.9707&y=37.5547&radius=500&size=1"
+        try {
+            http(url, null, NOMINATIM_READ_TIMEOUT_MS, "KakaoAK $key")
+        } catch (e: IOException) {
+            if (e.message == "HTTP 401" || e.message == "HTTP 403") {
+                throw AuthException(
+                    "카카오 인증 실패(${e.message}): REST API 키와 '카카오맵' 사용 설정을 확인하세요"
+                )
+            }
+            throw e
+        }
+    }
+
     /** 카카오 키/설정 오류(401, 403). 다른 서버로 넘어가지 않고 사용자에게 바로 알린다. */
     class AuthException(message: String) : IOException(message)
 
@@ -92,7 +109,7 @@ object PlaceSearch {
 
             val json = try {
                 JSONObject(
-                    http(url, null, NOMINATIM_READ_TIMEOUT_MS, "KakaoAK ${ApiKeys.KAKAO_REST_KEY}")
+                    http(url, null, NOMINATIM_READ_TIMEOUT_MS, "KakaoAK ${ApiKeys.kakaoRestKey}")
                 )
             } catch (e: IOException) {
                 if (e.message == "HTTP 401" || e.message == "HTTP 403") {
